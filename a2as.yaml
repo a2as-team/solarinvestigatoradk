@@ -1,0 +1,685 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: liongkj/solarinvestigatoradk
+    source: https://github.com/liongkj/solarinvestigatoradk
+    branch: main
+    commit: "ffecab0a"
+    scope: [backend/src/adk/agents/workorder_agent.py, backend/src/adk/callbacks/summarizer.py, backend/src/adk/problem_finder/agent.py,
+      backend/src/adk/problem_finder/prompts.py, backend/src/adk/problem_finder/sub_agents/__init__.py, backend/src/adk/problem_finder/sub_agents/aggregator_agent/agent.py,
+      backend/src/adk/problem_finder/sub_agents/aggregator_agent/prompt.py, backend/src/adk/problem_finder/sub_agents/alarm_research_agent/agent.py,
+      backend/src/adk/problem_finder/sub_agents/alarm_research_agent/prompts.py, backend/src/adk/problem_finder/sub_agents/alarm_research_agent/sub_agents/alarm_db_agent/agent.py,
+      backend/src/adk/problem_finder/sub_agents/alarm_research_agent/tools.py, backend/src/adk/problem_finder/sub_agents/daily_pr_agent/agent.py,
+      backend/src/adk/problem_finder/sub_agents/daily_pr_agent/prompts.py, backend/src/adk/problem_finder/sub_agents/detailed_inverter_performance_agent/agent.py,
+      backend/src/adk/problem_finder/sub_agents/detailed_inverter_performance_agent/prompts.py, backend/src/adk/problem_finder/sub_agents/detailed_inverter_performance_agent/tools.py,
+      backend/src/adk/problem_finder/sub_agents/detailed_plant_timeseries_agent/agent.py, backend/src/adk/problem_finder/sub_agents/detailed_plant_timeseries_agent/prompts.py,
+      backend/src/adk/problem_finder/sub_agents/detailed_plant_timeseries_agent/tools.py, backend/src/adk/problem_finder/toolbox.py,
+      backend/src/adk/services/investigation_service_simplified.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T17:02:28Z'
+    url: https://a2as.org/certified/agents/liongkj/solarinvestigatoradk
+  signatures:
+    digest: sha256:XiI5zA-HiclDdAOaj7V1eAOVH4gsn_U5GKph34Wohms
+    key: ed25519:HFu-ObfRghdyAVaYfpMzUxDXfRPF1bs6CgMlc945Od4
+    sig: ed25519:1GipKQvHVsWKDpWt5mVHxulY2lB2OsP4qSsk2qYnDjivI3N-lnCMeS5nXJZvKAq8urLaPdsWLRZKLwpPymUzBg
+
+agents:
+  _workorder_agent:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      model_id: gemini-2.0-flash-exp
+      class: WorkorderAgent
+  aggregator_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    params:
+      name: aggregator_agent
+      description: Aggregator agent to summarize all reports.
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.2"
+      instruction: return_aggregator_prompt()
+      output_key: final_comprehensive_report
+      after_agent_callback: summarize_agent_output_callback
+  alarm_research_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    tools: [get_device_model, list_corpora, rag_query_corpus, rag_query_all]
+    params:
+      name: alarm_research_agent
+      description: Vertex AI RAG Agent
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.2"
+      instruction: rag_prompt_v7()
+      output_key: alarm_agent_output
+      before_agent_callback: state_setup
+      after_agent_callback: summarize_agent_output_callback
+  alarm_researcher:
+    type: instance
+    params:
+      name: alarm_researcher
+      description: You are a sequential agent that coordinates the execution of the alarm_research_agent.
+      sub_agents: [alarm_research_agent, detailed_inverter_performance_agent]
+  chat_agent:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: investigation_qa_assistant
+      instruction: [You are a helpful assistant that can answer questions about an ongoing solar plant investigation., 'Investigation
+          Context:', '- Investigation ID: {investigation_id}', '- Plant ID: {investigation.plant_id}', '- Analysis Period:
+          {investigation.start_date} to {investigation.end_date}', '- Status: {investigation.status.value}', 'You can help
+          users understand the investigation results, clarify findings, and answer follow-up questions.', 'Keep your responses
+          concise and helpful. If you need more specific data, ask the user to be more specific.', 'Findings from investigation:',
+        '{value}']
+      description: Assistant for answering questions about solar plant investigations
+      function: continue_investigation
+  daily_pr_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    params:
+      name: daily_pr_agent
+      description: You are agent to retrieve daily and monthly PR data for specific plant
+      instruction: return_instruction_daily_pr()
+      after_agent_callback: summarize_agent_output_callback
+      output_key: daily_pr_agent_output
+  detailed_inverter_performance_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    tools: [append_problematic_rows]
+    params:
+      name: detailed_inverter_performance_agent
+      instruction: return_instruction_detailed_inverter_performance()
+      before_agent_callback: setup
+      output_key: detailed_inverter_performance_agent_output
+      after_agent_callback: summarize_agent_output_callback
+  detailed_plant_timeseries_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    tools: [filter_plant_timeseries_data, append_problematic_rows]
+    params:
+      name: detailed_plant_timeseries_agent
+      description: You are an expert in retrieving detailed data for target days for specific plants
+      instruction: return_instruction_detailed_plant_timeseries()
+      before_agent_callback: setup
+      output_key: detailed_plant_timeseries_agent_output
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.1"
+      after_agent_callback: summarize_agent_output_callback
+  parallel_pipeline:
+    type: instance
+    params:
+      name: parallel_pipeline
+      sub_agents: [detailed_plant_timeseries_agent, alarm_researcher]
+  planner_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    tools: [store_inverter_device_id_and_capacity_peak]
+    params:
+      name: planner_agent
+      instruction: return_instruction_planner()
+      description: You are an expert planner
+      output_key: planner_agent_output
+      after_agent_callback: summarize_agent_output_callback
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.1"
+  root_agent.0:
+    type: instance
+    params:
+      name: problem_finder
+      sub_agents: [planner_agent, daily_pr_agent, parallel_pipeline, aggregator_agent]
+      instance: root_agent
+  root_agent.1:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: databasemcp_agent
+      instruction: [You are a helpful Model Context Protocol (MCP) agent that retrieves data from database.]
+      instance: root_agent
+  structured_summarizer_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    params:
+      name: structured_summarizer_agent
+      description: Agent that creates structured summaries of other agent outputs
+      instruction: get_structured_summarizer_prompt()
+      output_key: structured_summary
+  workorder_agent:
+    type: instance
+    models: [gemini-2.5-flash-preview-05-20]
+    params:
+      name: workorder_agent
+      instruction: create_workorder_prompt(investigation)
+      description: Help users to create workorders based on investigation results
+      output_key: workorder_agent_output
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.1"
+      function: redirect_to_workorder_agent
+
+models:
+  gemini-2.0-flash:
+    type: literal
+    agents: [root_agent.1, chat_agent]
+  gemini-2.5-flash:
+    type: default
+    agents: [_workorder_agent]
+  gemini-2.5-flash-preview-05-20:
+    type: literal
+    agents: [planner_agent, detailed_inverter_performance_agent, daily_pr_agent, structured_summarizer_agent, workorder_agent,
+      detailed_plant_timeseries_agent, alarm_research_agent, aggregator_agent]
+
+tools:
+  append_problematic_rows:
+    type: function
+    agents: [detailed_inverter_performance_agent, detailed_plant_timeseries_agent]
+    params:
+      description: |-
+        tools to store problematic rows
+        parameters
+        String rows : the json response for the problematic five minutes data eg. "{problematic_five_minutes_pr : [row_data_here] ,analysis : "A general explaination on why you think these data is abnormal}"
+  filter_plant_timeseries_data:
+    type: function
+    agents: [detailed_plant_timeseries_agent]
+    params:
+      description: |-
+        Tools to filter the data, to extract possible abnormal data for further analysis
+
+        args:
+        string_data(str) :data to be filtered in string
+
+        return:
+        res(str) :filtered data in json string
+  get_device_model:
+    type: function
+    agents: [alarm_research_agent]
+    params:
+      description: |-
+        Gets the device model from the database based on plant id.
+
+        Args:
+            plantID: The unique ID for the target plant
+            date: The target time to investigate
+            toolContext: Context for updating session state
+
+        Returns:
+            dict: Status and result after executing the tool:
+                - action: The name of the tool used
+                - problematic_device_model: The device model found
+                - message: Brief message about the outcome
+  list_corpora:
+    type: function
+    agents: [alarm_research_agent]
+    params:
+      description: |-
+        List all available Vertex AI RAG corpora.
+
+        Args:
+            device_model: The target device model stored in ToolContext state `problematic_device_model`
+            toolContext: Context for updating session state
+
+        Returns:
+            dict: A list of available corpora and status, with each corpus containing:
+                - status: The status of executing the tool
+                - message: Brief message about tool outcome
+                - corpus_name: The resource name of the corpus to be queried in the next step
+  rag_query_all:
+    type: function
+    agents: [alarm_research_agent]
+  rag_query_corpus:
+    type: function
+    agents: [alarm_research_agent]
+    params:
+      description: |-
+        Returns a dict containing the status and information after querying a specific corpus.
+
+        Args:
+            query (str): The query to search the corpus.
+
+        Returns:
+            A dictionary containing along with the query results from the target corpus.
+  store_inverter_device_id_and_capacity_peak:
+    type: function
+    agents: [planner_agent]
+    params:
+      description: |-
+        Store inverter device id and capacity peak in the tool context state.
+
+        args:
+            tool_context (ToolContext): The context of the tool where the state is stored.
+            data (dict): A dictionary containing inverter device ids and their corresponding capacity peaks.
+
+mcp:
+  ToolboxSyncClient:
+    type: toolbox
+    url: https://agentmcp.liongkj.com
+    params:
+      class: ToolboxSyncClient
+      method: load_toolset
+
+teams:
+  alarm_researcher:
+    type: sequential
+    agents: [alarm_researcher, alarm_research_agent, detailed_inverter_performance_agent]
+  parallel_pipeline:
+    type: parallel
+    agents: [parallel_pipeline, detailed_plant_timeseries_agent, alarm_researcher]
+  root_agent:
+    type: sequential
+    agents: [root_agent, planner_agent, daily_pr_agent, parallel_pipeline, aggregator_agent]
+
+imports:
+  Agent: google.adk.agents.Agent
+  AgentMessage: adk.models.investigation.AgentMessage
+  AgentMessageType: adk.models.investigation.AgentMessageType
+  aggregator_agent: aggregator_agent.agent.aggregator_agent
+  alarm_research_agent: alarm_research_agent.agent.alarm_research_agent
+  Any: typing.Any
+  APIRouter: fastapi.APIRouter
+  append_problematic_rows: tools.append_problematic_rows
+  asyncio: asyncio
+  BaseModel: pydantic.BaseModel
+  BaseTool: google.adk.tools.base_tool.BaseTool
+  CallbackContext: google.adk.agents.callback_context.CallbackContext
+  cast: typing.cast
+  Content: google.genai.types.Content
+  daily_pr_agent: daily_pr_agent.agent.daily_pr_agent
+  DatabaseSessionService: google.adk.sessions.DatabaseSessionService
+  date: datetime.date
+  datetime: datetime.datetime
+  Depends: fastapi.Depends
+  detailed_inverter_performance_agent: detailed_inverter_performance_agent.agent.detailed_inverter_performance_agent
+  detailed_plant_timeseries_agent: detailed_plant_timeseries_agent.agent.detailed_plant_timeseries_agent
+  Dict: typing.Dict
+  Event: google.adk.events.Event
+  EventActions: google.adk.events.EventActions
+  Field: pydantic.Field
+  filter_plant_timeseries_data: tools.filter_plant_timeseries_data
+  get_device_model: tools.get_device_model
+  get_settings: adk.config.settings.get_settings
+  get_simplified_investigation_service: adk.services.investigation_service_simplified.get_simplified_investigation_service
+  HTTPException: fastapi.HTTPException
+  InMemorySessionService: google.adk.sessions.InMemorySessionService
+  Investigation: adk.models.investigation.Investigation
+  investigation_management_router: investigation_management_controller_simplified.router
+  InvestigationRequest: adk.models.investigation.InvestigationRequest
+  InvestigationResponse: adk.models.investigation.InvestigationResponse
+  InvestigationStatus: adk.models.investigation.InvestigationStatus
+  IsolationForest: sklearn.ensemble.IsolationForest
+  json: json
+  List: typing.List
+  list_corpora: tools.list_corpora
+  load_dotenv: dotenv.load_dotenv
+  logging: logging
+  np: numpy
+  Optional: typing.Optional
+  os: os
+  ParallelAgent: google.adk.agents.ParallelAgent
+  Part: google.genai.types.Part
+  pd: pandas
+  PlantService: adk.services.plant_service.PlantService
+  rag: vertexai.rag
+  rag_prompt_v7: prompts.rag_prompt_v7
+  Retriever: alarm_db_agent.agent.root_agent
+  return_aggregator_prompt: prompt.return_aggregator_prompt
+  return_instruction_daily_pr: prompts.return_instruction_daily_pr
+  return_instruction_detailed_inverter_performance: prompts.return_instruction_detailed_inverter_performance
+  return_instruction_detailed_plant_timeseries: prompts.return_instruction_detailed_plant_timeseries
+  return_instruction_planner: prompts.return_instruction_planner
+  root_agent: adk.problem_finder.agent.root_agent
+  Runner: google.adk.runners.Runner
+  seasonal_decompose: statsmodels.tsa.seasonal.seasonal_decompose
+  SequentialAgent: google.adk.agents.SequentialAgent
+  settings: adk.config.settings
+  SimplifiedInvestigationService: adk.services.investigation_service_simplified.SimplifiedInvestigationService
+  StreamingResponse: fastapi.responses.StreamingResponse
+  summarize_agent_output_callback: adk.callbacks.summarize_agent_output_callback
+  time: time
+  timedelta: datetime.timedelta
+  toolbox: adk.problem_finder.toolbox.toolbox
+  ToolboxSyncClient: toolbox_core.ToolboxSyncClient
+  ToolContext: google.adk.tools.tool_context.ToolContext
+  tools: tools.tools
+  types: google.genai.types
+  Union: typing.Union
+  uuid: uuid
+  vertexai: vertexai
+  Workorder: adk.models.workorder.Workorder
+  WorkorderPriority: adk.models.workorder.WorkorderPriority
+  WorkorderRequest: adk.models.workorder.WorkorderRequest
+  WorkorderStatus: adk.models.workorder.WorkorderStatus
+  WorkorderUpdate: adk.models.workorder.WorkorderUpdate
+
+functions:
+  __init__:
+    type: sync
+    module: backend.src.adk.agents.workorder_agent
+    args: [self, app_name]
+  _broadcast_event:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, event]
+  _broadcast_ui_update:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, ui_summary, full_content]
+  _broadcast_workorder_status:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, status, message]
+  _create_fallback_summary:
+    type: sync
+    module: backend.src.adk.callbacks.summarizer
+    args: [agent_name, agent_output]
+    params:
+      returns: AgentActionSummary
+  _create_investigation_prompt:
+    type: sync
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation, plant]
+    params:
+      returns: str
+  _get_session_id:
+    type: sync
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id]
+    params:
+      returns: str
+  _handle_streaming_event:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, event, accumulated_text]
+  _handle_workorder_request:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, content]
+  _parse_ui_summary_safely:
+    type: sync
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, ui_summary_data]
+  _process_investigation_async:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation]
+    params:
+      returns: None
+  _queue_sse_event:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, event_data]
+  _run_summarizer_agent:
+    type: sync
+    module: backend.src.adk.callbacks.summarizer
+    args: [agent_name, agent_output]
+    params:
+      returns: AgentActionSummary
+  _send_debounced_chunks:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, new_text, full_content]
+  _update_status:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, status, error_message]
+  append_problematic_rows:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.detailed_plant_timeseries_agent.tools
+    args: [rows, tool_context]
+  continue_investigation:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, user_message]
+    params:
+      returns: str
+  create_investigation:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, request]
+    params:
+      returns: Investigation
+  create_workorder:
+    type: async
+    module: backend.src.adk.agents.workorder_agent
+    args: [self, investigation_id, request]
+    params:
+      returns: Workorder
+  create_workorder_manually:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, workorder_request]
+    params:
+      returns: str
+  create_workorder_prompt:
+    type: sync
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [investigation]
+    params:
+      returns: str
+  delete_investigation:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id]
+    params:
+      returns: bool
+  event_generator:
+    type: async
+    module: backend.src.adk.controllers.investigation_management_controller_simplified
+  filter_plant_timeseries_data:
+    type: async
+    module: backend.src.adk.problem_finder.sub_agents.detailed_plant_timeseries_agent.tools
+    args: [string_data, tool_context]
+    params:
+      returns: str
+  generate_workorder_summary:
+    type: async
+    module: backend.src.adk.agents.workorder_agent
+    args: [self, workorders]
+    params:
+      returns: str
+  get_chat_history:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id]
+    params:
+      returns: List[AgentMessage]
+  get_device_model:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.tools
+    args: [plantID, date, tool_context]
+    params:
+      returns: dict
+  get_event_stream:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id]
+  get_investigation:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id]
+    params:
+      returns: Optional[Investigation]
+  get_simplified_investigation_service:
+    type: sync
+    module: backend.src.adk.services.investigation_service_simplified
+    params:
+      returns: SimplifiedInvestigationService
+  get_structured_summarizer_prompt:
+    type: sync
+    module: backend.src.adk.callbacks.summarizer
+    params:
+      returns: str
+  get_workorder_agent:
+    type: sync
+    module: backend.src.adk.agents.workorder_agent
+    params:
+      returns: WorkorderAgent
+  get_workorders:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id]
+    params:
+      returns: List[Dict]
+  handle_decision:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, decision, decision_type]
+    params:
+      returns: str
+  list_corpora:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.tools
+    args: [device_model, tool_context]
+    params:
+      returns: dict
+  list_investigations:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, limit, offset]
+    params:
+      returns: List[Investigation]
+  post_message:
+    type: async
+    module: backend.src.adk.controllers.investigation_management_controller_simplified
+    args: [investigation_id, message, service]
+  process_workorder_request:
+    type: async
+    module: backend.src.adk.agents.workorder_agent
+    args: [self, investigation_id, user_message]
+    params:
+      returns: Dict
+  rag_prompt_v5:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.prompts
+    params:
+      returns: str
+  rag_prompt_v6:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.prompts
+    params:
+      returns: str
+  rag_prompt_v7:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.prompts
+    params:
+      returns: str
+  rag_prompt_v8:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.prompts
+    params:
+      returns: str
+  rag_query_all:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.agent
+    args: [query]
+    params:
+      returns: dict
+  rag_query_corpus:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.agent
+    args: [query, tool_context]
+    params:
+      returns: dict
+  redirect_to_workorder_agent:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, user_message]
+    params:
+      returns: str
+  return_aggregator_prompt:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.aggregator_agent.prompt
+    params:
+      returns: str
+  return_instruction_daily_pr:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.daily_pr_agent.prompts
+    params:
+      returns: str
+  return_instruction_detailed_inverter_performance:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.detailed_inverter_performance_agent.prompts
+    params:
+      returns: str
+  return_instruction_detailed_plant_timeseries:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.detailed_plant_timeseries_agent.prompts
+    params:
+      returns: str
+  return_instruction_planner:
+    type: sync
+    module: backend.src.adk.problem_finder.prompts
+    params:
+      returns: str
+  return_instruction_problem_finder:
+    type: sync
+    module: backend.src.adk.problem_finder.prompts
+    params:
+      returns: str
+  run_investigation_step:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, user_message]
+    params:
+      returns: str
+  setup:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.detailed_plant_timeseries_agent.agent
+    args: [callback_context]
+  start_investigation:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, request]
+    params:
+      returns: Investigation
+  state_setup:
+    type: sync
+    module: backend.src.adk.problem_finder.sub_agents.alarm_research_agent.agent
+    args: [callback_context]
+  store_inverter_device_id_and_capacity_peak:
+    type: sync
+    module: backend.src.adk.problem_finder.agent
+    args: [tool_context, data]
+  stream_investigation_events:
+    type: async
+    module: backend.src.adk.controllers.investigation_management_controller_simplified
+    args: [investigation_id, service]
+  summarize_agent_output_callback:
+    type: sync
+    module: backend.src.adk.callbacks.summarizer
+    args: [callback_context]
+    params:
+      returns: None
+  update_investigation_status:
+    type: async
+    module: backend.src.adk.services.investigation_service_simplified
+    args: [self, investigation_id, status, error_message]
+    params:
+      returns: bool
+  update_workorder:
+    type: async
+    module: backend.src.adk.agents.workorder_agent
+    args: [self, workorder, update]
+    params:
+      returns: Workorder
+
+variables:
+  ANALYTICS_AGENT_MODEL:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [backend.src.adk.problem_finder.sub_agents.alarm_research_agent.sub_agents.alarm_db_agent.agent]
+  GOOGLE_CLOUD_LOCATION:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [backend.src.adk.problem_finder.sub_agents.alarm_research_agent.agent]
+  GOOGLE_CLOUD_PROJECT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [backend.src.adk.problem_finder.sub_agents.alarm_research_agent.agent]
